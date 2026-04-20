@@ -193,24 +193,25 @@ All subgenerator delegation semantics are retained.
 
 1. :meth:`~object.__aiter__` is called to retrieve the asynchronous
    generator iterator.
-2. :meth:`~agen.asend` is called to advance the asynchronous generator
-   iterator.
+2. Calls to :meth:`~agen.asend`, :meth:`~agen.athrow`, and :meth:`~agen.aclose` are
+   delegated instead of the usual :meth:`~gen.send`, :meth:`~gen.throw`, and
+   :meth:`~gen.close` methods.
+3. :exc:`StopAsyncIteration` is used to retrieve the return value instead of
+   :exc:`StopIteration`.
 
 ``async yield from`` is only allowed in an asynchronous generator function;
 using it elsewhere will raise a :exc:`SyntaxError`.
 
-In an asynchronous generator, ``async yield from`` is conceptually equivalent to:
+In an asynchronous generator, ``async yield from`` is broadly equivalent to:
 
 .. code-block:: python
 
     async for item in agenerator():
         yield item
 
-``async yield from`` retains all the subgenerator delegation behavior present
-in standard ``yield from`` expressions. This behavior is outlined in :pep:`380`
-and :ref:`the documentation <yieldexpr>`. In short, values passed with
-:meth:`~agen.asend` and exceptions supplied with :meth:`~agen.athrow`
-are also passed to the target generator.
+But, like with ``yield from``, ``async yield from`` also provides the standard
+subgenerator delegation behavior. This is outlined in :pep:`380`
+and :ref:`the documentation <yieldexpr>`.
 
 
 ``async yield from`` as an expression
@@ -259,6 +260,39 @@ For example:
         result = async yield from agenerator()
         print(result)  # 2
 
+
+``async yield from`` formal semantics
+-------------------------------------
+
+.. code-block:: python
+
+    _aiterator = await aiter(EXPR)
+    try:
+        _delegated_next = await anext(_aiterator)
+    except AsyncStopIteration as _e:
+        RESULT = _e.value
+    else:
+        while True:
+            try:
+                _received = yield _delegated_next
+            except GeneratorExit:
+                await _aiterator.aclose()
+            except BaseException:
+                _exc_info = sys.exc_info()
+                try:
+                    _delegated_next = await _aiterator.athrow(*_exc_info)
+                except AsyncStopIteration as _stop_iteration:
+                    RESULT = _stop_iteration.value
+                    break
+            else:
+                try:
+                    if _received is None:
+                        _delegated_next = await anext(_aiterator)
+                    else:
+                        _delegated_next = _await aiterator.asend(_received)
+                except StopAsyncIteration as _stop_iteration:
+                    RESULT = _stop_iteration.value
+                    break
 
 Rationale
 =========
